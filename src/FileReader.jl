@@ -44,7 +44,6 @@ function find_newline(reader::BufferedReader, state::Int)
             return cur_stop:(i > 1 && reader.arr[i-1] == 0x0d ? i-2 : i-1), i
         end
     end
-
     return 0:0, cur_stop
 end
 
@@ -81,20 +80,38 @@ end
     # This is the first iter so only the last half of the array is filled now
     # hence start reading from buffer + 1
     r, state = find_newline(reader, reader.buffer)
+    r.stop == 0 && @warn ("Buffer probably too small")
     return StringView(view(reader.arr, r)), state
+end
+
+
+@inline function check_trailing_newline(reader::BufferedReader, l::Int)
+    if reader.arr[l] != 0x00 
+        @inbounds for i in l:reader.tot_alloc
+            if reader.arr[i] == 0x00
+                return l:i-1, i
+            end
+        end
+    end
+    return 0:0, reader.tot_alloc
 end
 
 @inline function Base.iterate(reader::BufferedReader, state::Int)
     r, state = find_newline(reader, state)
+
     if r.start == 0
         if !eof(reader.io)
             read_next_chunk!(reader)
             r, state = find_newline(reader, state - reader.buffer - 1)
         else
-            close(reader.io)
-            return nothing
+            r, state = check_trailing_newline(reader, state)
+            if r.start == 0
+                close(reader.io)
+                return(nothing)
+            end
         end
     end
+
     # I twould be odd to not reach EOF but still not find
     # a full line, throw warning
     r.stop == 0 && @warn ("Buffer probably too small")
